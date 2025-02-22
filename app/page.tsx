@@ -1,8 +1,8 @@
 "use client"
 import React, { useState } from "react";
-import BackgroundSVG from "@/component/SVGBG"; // Import SVG component
 import Header from "@/component/header"; // Import Header component
-
+import BackgroundSVG from "@/component/SVGBG"; // Import BackgroundSVG component
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const HomePage = () => {
 
@@ -10,7 +10,12 @@ const HomePage = () => {
   const [loading , setLoading] = useState(false);
   const [response, setResponse] = useState<string | null>(null); //store the text result of the image analysis
   const [keywords, setKeywords] = useState<string[]>([]); //store the keywords of the image analysis
-  const [relatedquestion, setRelatedQuestion] = useState<string[]>([]);  
+  const [relatedquestion, setRelatedQuestion] = useState<string[]>([]); 
+  const [language, setLanguage] = useState("English");
+  const [selectedLanguage, setSelectedLanguage] = useState("English");
+  const [previousAnalyses, setPreviousAnalyses] = useState<{ imageUrl: string, description: string }[]>([]);
+
+
   // Function to handle image upload
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -19,12 +24,16 @@ const HomePage = () => {
     }
   };
 
-  const identifyImage = async ( additionalPrompt:String="") => {
+  const identifyImage = async (selectedLanguage = "",additionalPrompt:string="") => {
     if (!image) return;
       setLoading(true);
       
-      const { GoogleGenerativeAI } = require("@google/generative-ai");
-      const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GOOGLE_GEMINI_API_KEY);
+      // const { GoogleGenerativeAI } = require("@google/generative-ai");
+      const apiKey = process.env.NEXT_PUBLIC_GOOGLE_GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error("Google Gemini API key is not defined");
+      }
+      const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
       try {
@@ -33,14 +42,16 @@ const HomePage = () => {
         const result = await model.generateContent({
           contents: [
             {
+              role: "user",
               parts: [
-                { text: `Analyze the image and provide a detailed description. ${additionalPrompt}` },
+                { text: `Analyze the image and provide a detailed description.${selectedLanguage}. ${additionalPrompt}` },
                 imagePart // Include the image data properly
               ]
             }
           ]
         });
-      
+        
+        
         const response = await result.response;
         const generatedText=response
         .text()
@@ -58,12 +69,25 @@ const HomePage = () => {
         //Giving a text as not paragraph but with separate discriprion
         const resulttext = response.text().trim();
         setResponse(resulttext);
+        //console.log("Full API Response:", result.response);
+        const candidates = result.response?.candidates || [];
+        const firstCandidate = candidates.length > 0 ? candidates[0] : null;
+        
+        const contentParts = firstCandidate?.content?.parts || [];
+    const responseText = contentParts.length > 0 ? contentParts[0].text : "No description available";
+    
+    // Store the analyzed image and its response
+    setPreviousAnalyses(prev => [...prev, { 
+      imageUrl: URL.createObjectURL(image), 
+      description: responseText || "No description available" 
+    }]);
         
 
         //console.log("Response:", text);
         //console.log("Response:", response);
       } catch (error) {
         console.error("Error analyzing image:", error);
+        alert("AI service is temporarily unavailable. Please try again later.");
       }
       finally {
         setLoading(false);
@@ -118,20 +142,25 @@ const HomePage = () => {
     identifyImage(`Focus more on aspects related to "${keyword}".`);
   };
     
-    const getRelatedQuestions = async (text: string) => {
-    const { GoogleGenerativeAI } = require("@google/generative-ai");
-    const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GOOGLE_GEMINI_API_KEY);
+    const getRelatedQuestions = async (text: string,selectedLanguage="") => {
+    // const { GoogleGenerativeAI } = require("@google/generative-ai");
+    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("Google Gemini API key is not defined");
+    }
+    const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
     try {
       const result = await model.generateContent({
         contents: [
           {
+            role: "user",
             parts: [
-              { text: `Based on the following information about an image, generate 5 related questions that someone might ask to learn more about the subject of the image:
+              { text: `Based on the following information about an image in ${selectedLanguage}, generate 5 related questions that someone might ask to learn more about the subject of the image:
               
               ${text}
     
-              Format the output as a single list of questions, each on a new line.` },
+              Format the output as a single list of questions in ${selectedLanguage}, each on a new line.` },
             ],
           },
         ],
@@ -145,9 +174,21 @@ const HomePage = () => {
     }
   }
 
-  const askRelatedquestion = async (question:String) => {
-    identifyImage('Anser the following question about the image ${question}');
+
+  let timeoutId: NodeJS.Timeout | null = null;
+  const askRelatedquestion = async (question:string, selectedLanguage: string) => {
+    if (timeoutId) clearTimeout(timeoutId);
+    setSelectedLanguage(selectedLanguage);
+
+
+    timeoutId = setTimeout(() => {
+      identifyImage(`Answer the following question about the image in ${selectedLanguage}: ${question}`);
+    }, 5000); // Wait 1 second before sending the request
   }
+
+  const handleLanguageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setLanguage(e.target.value);
+  };
 
     return (
     <main className="relative flex flex-col items-center justify-center min-h-screen min-w-full bg-gray-900 ">
@@ -164,17 +205,47 @@ const HomePage = () => {
       {/* Foreground Content */}
       <div className="relative z-10 text-white text-center mt-24 md:mt-40 mb-6"><h1 className="text-4xl md:text-4xl font-bold leading-normal">Free AI Image Analyzer Chatbot</h1></div>
       <div className="relative z-10 text-white text-center p-6 bg-black/40 rounded-xl lg:w-[60rem] md:w-[40rem]">
-      <div className="mb-4">
-        <label htmlFor="image-upload" className="block text-white text-left leading-loose">Upload an image to get started</label>
-        <input type="file" id="image-upload" accept="image/*" onChange={handleImageUpload}  className="block w-full text-sm leading-normal
-             file:mr-4 file:py-2 file:px-4 file:rounded-full file:border:0 file:text-sm file:font-semibold file:bg-white file:text-orange-700 transition duration-150 ease-in-out"/>
-      </div>
+      <div className="mb-4 flex justify-between items-center gap-4">
+  {/* Left Side - Upload Image */}
+  <div className="w-1/2 mb-10">
+    <label htmlFor="image-upload" className="block text-white text-left leading-loose">
+      Upload an image to get started
+    </label>
+    <input
+      type="file"
+      id="image-upload"
+      accept="image/*"
+      onChange={handleImageUpload}
+      className="block w-full text-sm leading-normal
+      file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 
+      file:text-sm file:font-semibold file:bg-white file:text-orange-700 
+      transition duration-150 ease-in-out"
+    />
+  </div>
+
+  {/* Right Side - Select Language */}
+
+    <label className="block text-white text-right">Select Language:</label>
+    <select
+      value={language}
+      onChange={handleLanguageChange}
+      className="block w-60 p-2 border rounded bg-gray-800 text-white"
+    >
+      <option value="English">English</option>
+      <option value="Spanish">Spanish</option>
+      <option value="German">German</option>
+      <option value="Hindi">Hindi</option>
+      <option value="Bengali">Bengali</option>
+      <option value="Korean">Korean</option>
+    </select>
+</div>
       {image && (
         <div className="relative w-full h-96 mb-8 flex justify-center">
           <img src={URL.createObjectURL(image)} alt="Uploaded Image" width={300} height={300} className="object-contain  rounded-xl">
           </img>
         </div> )}
-      <button type="button" disabled={!image || loading } className="w-full bg-orange-500 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded-full disabled:opacity-50 disabled:cursor-not-allowed" onClick={() => identifyImage()}>
+
+      <button type="button" disabled={!image || loading } className="w-full bg-orange-500 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded-full disabled:opacity-50 disabled:cursor-not-allowed" onClick={() => identifyImage(language)}>
         {loading ? "Analyzing Image..." : "Analyze Image"}
       </button>
       {response && (
@@ -209,13 +280,39 @@ const HomePage = () => {
         <ul className="space-y-3">
           {relatedquestion.map((question, index) => (
             <li key={index}>
-              <button  type="button"  className="text-left w-full bg-yellow-200 text-orange-700 px-4 py-2 rounded-xl" onClick={() => askRelatedquestion(question)} >{question}</button>
+              <button  type="button"  className="text-left w-full bg-yellow-200 text-orange-700 px-4 py-2 rounded-xl" onClick={() => askRelatedquestion(question, selectedLanguage)} >{question}</button>
             </li>
           ))}
         </ul>
         </div>
       )}
     </div>
+    <div className="relative font-bold text-white text-center mt-16 mb-16 px-4">
+  <h3 className="text-3xl font-semibold text-white mb-10">Previously Analyzed Images</h3>
+  
+  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 px-4">
+    {previousAnalyses.map((item, index) => (
+      <div key={index} className="relative group rounded-lg overflow-hidden">
+        {/* Image Thumbnail */}
+        <img 
+          src={item.imageUrl} 
+          alt="Analyzed Image" 
+          className="w-full h-40 object-fill rounded-lg"
+        />
+
+        {/* Hover Overlay with Title */}
+        <div className="absolute inset-0 bg-black/70 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 p-4">
+        <p className="text-white text-center font-medium">
+  {item.description.length > 100 
+    ? item.description.slice(0, 100) + "..." 
+    : item.description}
+</p>
+
+        </div>
+      </div>
+    ))}
+  </div>
+</div>
       <section id="how-it-work" className="relative mt-16 mb-16 px-4">
       <h2 className=" text-3xl md:text-4xl font-bold text-white text-center mb-8">How It Works</h2>
   

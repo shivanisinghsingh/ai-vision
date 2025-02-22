@@ -47,4 +47,4 @@ const BackgroundSVG = ({ className }: { className?: string }) => {
   );
 };
 
-
+export default BackgroundSVG;
